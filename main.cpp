@@ -1,7 +1,11 @@
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
 #include <linux/types.h>
 #include <linux/netfilter.h>		/* for NF_ACCEPT */
 #include <errno.h>
@@ -17,6 +21,34 @@ void dump(unsigned char* buf, int size) {
         printf("%02x ", buf[i]);
     }
     printf("\n");
+}
+
+/* drop packet */
+static u_int32_t drop_pkt (struct nfq_data *tb)
+{
+    struct iphdr *ip_hdr;
+    struct tcphdr *tcp_hdr;
+    int ret;
+    unsigned char *data, *tcp_data;
+    const char *dt_host = "Host: www.sex.com";
+
+    ret = nfq_get_payload(tb, &data);
+    if (ret >= 0) {
+        ip_hdr = (struct iphdr*)data;
+        if (ip_hdr->protocol == IPPROTO_TCP) {
+            tcp_hdr = (struct tcphdr*)(data + ip_hdr->ihl*4);
+            /* Check dest port http(80) */
+            if (ntohs(tcp_hdr->dest) == 80) {
+                tcp_data = (unsigned char*)(data + ip_hdr->ihl*4 + tcp_hdr->doff*4);
+                /* Search detect host */
+                if (strstr((char*)tcp_data, dt_host)) {
+                    printf("[*] Detect Drop Packet!\n");
+                    return NF_DROP;
+                }
+            }
+        }
+    }
+    return NF_ACCEPT;
 }
 
 /* returns packet id */
@@ -81,8 +113,10 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
           struct nfq_data *nfa, void *data)
 {
     u_int32_t id = print_pkt(nfa);
+    u_int32_t verdict = drop_pkt(nfa);
     printf("entering callback\n");
-    return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
+    return nfq_set_verdict(qh, id, verdict, 0, NULL);
+    //return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
 
